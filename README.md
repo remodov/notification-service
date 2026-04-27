@@ -57,6 +57,46 @@ Tier A декларирует, что отсутствие агрегатов и
 а **проектное решение**. Спека от этого не страдает: 13 разделов вместо
 17, и читателю сразу видно, что это за класс задачи.
 
+## Quickstart
+
+```bash
+# 1. Postgres из docker-compose
+docker compose up -d postgres
+
+# 2. Sanity-build без интеграционных тестов
+./gradlew build -x test
+
+# 3. Все тесты (нужен Postgres)
+./gradlew test
+
+# 4. Локальный запуск
+./gradlew bootRun --args='--spring.profiles.active=local'
+```
+
+Сервис слушает `:8090`. Liquibase сам прогонит миграции из
+`migrations/db/changelog-master.yaml` и засеет 14 базовых шаблонов.
+
+### Профили
+
+| Профиль | Когда применять | Что включает |
+|---|---|---|
+| `local` | `./gradlew bootRun` для ручной разработки | Postgres из docker-compose (порт 5433), security permitAll, Kafka listeners off, Mailgun/FCM dev-плейсхолдеры |
+| `integration-test` | Только в `@SpringBootTest` | Postgres из docker-compose, WireMock-стабы для Customer BFF / Mailgun / FCM на фиксированных портах, schedulers заглушены |
+| (без профиля) | Production | Реальный IdP, Kafka, Customer BFF, Mailgun, FCM (все URL-ы и ключи через ENV) |
+
+### Что реализовано
+
+| Что | Где |
+|---|---|
+| 4 таблицы + 14 seed-шаблонов | `migrations/db/changelog/v-1.0/initial-schema.yaml` |
+| 8 событий → email + push | `channel.ChannelRules` (BR-N2) |
+| Идемпотентный консьюмер | `consumer.OrderEventConsumer` + `processed_events` (BR-N1) |
+| Шедулеры dispatch + purge | `scheduler.DispatchPendingScheduler`, `PurgeOldRecordsScheduler` |
+| Mailgun + FCM провайдеры | `provider.email.MailgunEmailProvider`, `provider.push.FcmPushProvider` |
+| Webhook delivered/bounced | `webhook.MailgunWebhookController` (HMAC валидация) |
+| Admin REST | `controller.AdminNotificationController` (роль `support-operator`) |
+| Тесты | 18 интеграционных, все зелёные |
+
 ## Связанные артефакты
 
 - [Order Service](https://github.com/remodov/order-service) — Tier C, источник событий, которые потребляет Notification.
