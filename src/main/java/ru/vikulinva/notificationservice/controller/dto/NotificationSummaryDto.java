@@ -1,20 +1,20 @@
 package ru.vikulinva.notificationservice.controller.dto;
 
-import ru.vikulinva.notificationservice.domain.Channel;
-import ru.vikulinva.notificationservice.domain.NotificationStatus;
+import ru.vikulinva.notificationservice.generated.enums.NotificationChannel;
+import ru.vikulinva.notificationservice.generated.enums.NotificationStatus;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record NotificationSummaryDto(
     UUID id,
     UUID userId,
     String eventType,
-    Channel channel,
+    NotificationChannel channel,
     String contact,
     NotificationStatus status,
-    Instant createdAt,
-    Instant sentAt,
-    Instant deliveredAt
+    OffsetDateTime createdAt,
+    OffsetDateTime sentAt,
+    OffsetDateTime deliveredAt
 ) {
 }

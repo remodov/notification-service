@@ -1,235 +1,146 @@
 package ru.vikulinva.notificationservice.repository;
 
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.jooq.Condition;
+import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
-import ru.vikulinva.notificationservice.domain.Channel;
-import ru.vikulinva.notificationservice.domain.Notification;
-import ru.vikulinva.notificationservice.domain.NotificationStatus;
+import ru.vikulinva.notificationservice.generated.enums.NotificationChannel;
+import ru.vikulinva.notificationservice.generated.enums.NotificationStatus;
+import ru.vikulinva.notificationservice.generated.tables.pojos.NotificationsPojo;
 
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.HashMap;
+import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.jooq.impl.DSL.noCondition;
+import static ru.vikulinva.notificationservice.generated.Tables.NOTIFICATIONS;
+
 /**
- * JdbcTemplate-репозиторий для {@code notifications}. На Tier A — голый
- * SQL без JPA: понятно, что именно крутится в БД, легко оптимизировать.
+ * Репозиторий для {@code notifications}. Только jOOQ DSL поверх
+ * сгенерённых таблиц / POJO / enum'ов.
  */
 @Repository
 public class NotificationRepository {
 
-    private final NamedParameterJdbcTemplate jdbc;
+    private final DSLContext dsl;
 
-    public NotificationRepository(NamedParameterJdbcTemplate jdbc) {
-        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+    public NotificationRepository(DSLContext dsl) {
+        this.dsl = Objects.requireNonNull(dsl, "dsl");
     }
 
-    public void insert(Notification n) {
-        String sql = """
-            INSERT INTO notifications (
-                id, event_id, event_type, user_id, channel, contact, template_key, locale,
-                status, source_event_payload, template_variables, external_id,
-                created_at, sent_at, delivered_at, last_error
-            ) VALUES (
-                :id, :eventId, :eventType, :userId, :channel, :contact, :templateKey, :locale,
-                :status, :sourcePayload::jsonb, :templateVars::jsonb, :externalId,
-                :createdAt, :sentAt, :deliveredAt, :lastError
-            )
-            """;
-        jdbc.update(sql, params(n));
+    public void insert(NotificationsPojo n) {
+        dsl.insertInto(NOTIFICATIONS)
+            .set(dsl.newRecord(NOTIFICATIONS, n))
+            .execute();
     }
 
-    public Optional<Notification> findById(UUID id) {
-        var rows = jdbc.query(
-            "SELECT * FROM notifications WHERE id = :id",
-            new MapSqlParameterSource("id", id),
-            rowMapper());
-        return rows.stream().findFirst();
+    public Optional<NotificationsPojo> findById(UUID id) {
+        return Optional.ofNullable(
+            dsl.selectFrom(NOTIFICATIONS)
+                .where(NOTIFICATIONS.ID.eq(id))
+                .fetchOneInto(NotificationsPojo.class));
     }
 
-    public List<Notification> findPending(int limit) {
-        return jdbc.query(
-            "SELECT * FROM notifications WHERE status = 'QUEUED' ORDER BY created_at LIMIT :limit",
-            new MapSqlParameterSource("limit", limit),
-            rowMapper());
+    public List<NotificationsPojo> findPending(int limit) {
+        return dsl.selectFrom(NOTIFICATIONS)
+            .where(NOTIFICATIONS.STATUS.eq(NotificationStatus.QUEUED))
+            .orderBy(NOTIFICATIONS.CREATED_AT.asc())
+            .limit(limit)
+            .fetchInto(NotificationsPojo.class);
     }
 
-    public Optional<Notification> findByExternalId(String externalId) {
-        var rows = jdbc.query(
-            "SELECT * FROM notifications WHERE external_id = :externalId",
-            new MapSqlParameterSource("externalId", externalId),
-            rowMapper());
-        return rows.stream().findFirst();
+    public Optional<NotificationsPojo> findByExternalId(String externalId) {
+        return Optional.ofNullable(
+            dsl.selectFrom(NOTIFICATIONS)
+                .where(NOTIFICATIONS.EXTERNAL_ID.eq(externalId))
+                .fetchOneInto(NotificationsPojo.class));
     }
 
-    /**
-     * Поиск с фильтрами для оператора. Все параметры опциональны.
-     */
-    public List<Notification> search(Filter filter, int page, int size) {
-        StringBuilder sql = new StringBuilder("SELECT * FROM notifications WHERE 1=1");
-        var params = new MapSqlParameterSource();
-        if (filter.userId() != null) {
-            sql.append(" AND user_id = :userId");
-            params.addValue("userId", filter.userId());
-        }
-        if (filter.status() != null) {
-            sql.append(" AND status = :status");
-            params.addValue("status", filter.status().name());
-        }
-        if (filter.channel() != null) {
-            sql.append(" AND channel = :channel");
-            params.addValue("channel", filter.channel().name());
-        }
-        if (filter.eventType() != null) {
-            sql.append(" AND event_type = :eventType");
-            params.addValue("eventType", filter.eventType());
-        }
-        if (filter.from() != null) {
-            sql.append(" AND created_at >= :from");
-            params.addValue("from", Timestamp.from(filter.from()));
-        }
-        if (filter.to() != null) {
-            sql.append(" AND created_at < :to");
-            params.addValue("to", Timestamp.from(filter.to()));
-        }
-        sql.append(" ORDER BY created_at DESC LIMIT :size OFFSET :offset");
-        params.addValue("size", size);
-        params.addValue("offset", (long) page * size);
-        return jdbc.query(sql.toString(), params, rowMapper());
+    public List<NotificationsPojo> search(Filter filter, int page, int size) {
+        return dsl.selectFrom(NOTIFICATIONS)
+            .where(toCondition(filter))
+            .orderBy(NOTIFICATIONS.CREATED_AT.desc())
+            .limit(size)
+            .offset((long) page * size)
+            .fetchInto(NotificationsPojo.class);
     }
 
     public long count(Filter filter) {
-        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM notifications WHERE 1=1");
-        var params = new MapSqlParameterSource();
-        if (filter.userId() != null) {
-            sql.append(" AND user_id = :userId");
-            params.addValue("userId", filter.userId());
-        }
-        if (filter.status() != null) {
-            sql.append(" AND status = :status");
-            params.addValue("status", filter.status().name());
-        }
-        if (filter.channel() != null) {
-            sql.append(" AND channel = :channel");
-            params.addValue("channel", filter.channel().name());
-        }
-        if (filter.eventType() != null) {
-            sql.append(" AND event_type = :eventType");
-            params.addValue("eventType", filter.eventType());
-        }
-        if (filter.from() != null) {
-            sql.append(" AND created_at >= :from");
-            params.addValue("from", Timestamp.from(filter.from()));
-        }
-        if (filter.to() != null) {
-            sql.append(" AND created_at < :to");
-            params.addValue("to", Timestamp.from(filter.to()));
-        }
-        Long c = jdbc.queryForObject(sql.toString(), params, Long.class);
-        return c == null ? 0 : c;
+        return dsl.fetchCount(dsl.selectOne().from(NOTIFICATIONS).where(toCondition(filter)));
     }
 
-    public void updateStatus(UUID id, NotificationStatus status, Instant sentAt, String externalId, String lastError) {
-        jdbc.update("""
-            UPDATE notifications
-            SET status = :status,
-                sent_at = COALESCE(:sentAt, sent_at),
-                external_id = COALESCE(:externalId, external_id),
-                last_error = :lastError
-            WHERE id = :id
-            """, new MapSqlParameterSource()
-            .addValue("id", id)
-            .addValue("status", status.name())
-            .addValue("sentAt", sentAt == null ? null : Timestamp.from(sentAt))
-            .addValue("externalId", externalId)
-            .addValue("lastError", lastError));
+    public void updateStatus(UUID id,
+                                NotificationStatus status,
+                                OffsetDateTime sentAt,
+                                String externalId,
+                                String lastError) {
+        var update = dsl.update(NOTIFICATIONS)
+            .set(NOTIFICATIONS.STATUS, status)
+            .set(NOTIFICATIONS.LAST_ERROR, lastError);
+        if (sentAt != null) {
+            update = update.set(NOTIFICATIONS.SENT_AT, sentAt);
+        }
+        if (externalId != null) {
+            update = update.set(NOTIFICATIONS.EXTERNAL_ID, externalId);
+        }
+        update.where(NOTIFICATIONS.ID.eq(id)).execute();
     }
 
-    public void markDelivered(UUID id, Instant deliveredAt) {
-        jdbc.update("""
-            UPDATE notifications
-            SET status = 'DELIVERED', delivered_at = :deliveredAt
-            WHERE id = :id AND status = 'SENT'
-            """, new MapSqlParameterSource()
-            .addValue("id", id)
-            .addValue("deliveredAt", Timestamp.from(deliveredAt)));
+    public void markDelivered(UUID id, OffsetDateTime deliveredAt) {
+        dsl.update(NOTIFICATIONS)
+            .set(NOTIFICATIONS.STATUS, NotificationStatus.DELIVERED)
+            .set(NOTIFICATIONS.DELIVERED_AT, deliveredAt)
+            .where(NOTIFICATIONS.ID.eq(id))
+            .and(NOTIFICATIONS.STATUS.eq(NotificationStatus.SENT))
+            .execute();
     }
 
     public void markBounced(UUID id, String reason) {
-        jdbc.update("""
-            UPDATE notifications
-            SET status = 'BOUNCED', last_error = :reason
-            WHERE id = :id AND status = 'SENT'
-            """, new MapSqlParameterSource()
-            .addValue("id", id)
-            .addValue("reason", reason));
+        dsl.update(NOTIFICATIONS)
+            .set(NOTIFICATIONS.STATUS, NotificationStatus.BOUNCED)
+            .set(NOTIFICATIONS.LAST_ERROR, reason)
+            .where(NOTIFICATIONS.ID.eq(id))
+            .and(NOTIFICATIONS.STATUS.eq(NotificationStatus.SENT))
+            .execute();
     }
 
-    public int deleteOlderThan(Instant threshold) {
-        return jdbc.update(
-            "DELETE FROM notifications WHERE created_at < :threshold",
-            new MapSqlParameterSource("threshold", Timestamp.from(threshold)));
+    public int deleteOlderThan(OffsetDateTime threshold) {
+        return dsl.deleteFrom(NOTIFICATIONS)
+            .where(NOTIFICATIONS.CREATED_AT.lt(threshold))
+            .execute();
     }
 
-    private MapSqlParameterSource params(Notification n) {
-        var p = new MapSqlParameterSource();
-        p.addValue("id", n.getId());
-        p.addValue("eventId", n.getEventId());
-        p.addValue("eventType", n.getEventType());
-        p.addValue("userId", n.getUserId());
-        p.addValue("channel", n.getChannel().name());
-        p.addValue("contact", n.getContact());
-        p.addValue("templateKey", n.getTemplateKey());
-        p.addValue("locale", n.getLocale());
-        p.addValue("status", n.getStatus().name());
-        p.addValue("sourcePayload", n.getSourceEventPayload());
-        p.addValue("templateVars", n.getTemplateVariables());
-        p.addValue("externalId", n.getExternalId());
-        p.addValue("createdAt", Timestamp.from(n.getCreatedAt()));
-        p.addValue("sentAt", n.getSentAt() == null ? null : Timestamp.from(n.getSentAt()));
-        p.addValue("deliveredAt", n.getDeliveredAt() == null ? null : Timestamp.from(n.getDeliveredAt()));
-        p.addValue("lastError", n.getLastError());
-        return p;
-    }
-
-    private RowMapper<Notification> rowMapper() {
-        return (rs, rn) -> {
-            Notification n = new Notification();
-            n.setId(rs.getObject("id", UUID.class));
-            n.setEventId(rs.getObject("event_id", UUID.class));
-            n.setEventType(rs.getString("event_type"));
-            n.setUserId(rs.getObject("user_id", UUID.class));
-            n.setChannel(Channel.valueOf(rs.getString("channel")));
-            n.setContact(rs.getString("contact"));
-            n.setTemplateKey(rs.getString("template_key"));
-            n.setLocale(rs.getString("locale"));
-            n.setStatus(NotificationStatus.valueOf(rs.getString("status")));
-            n.setSourceEventPayload(rs.getString("source_event_payload"));
-            n.setTemplateVariables(rs.getString("template_variables"));
-            n.setExternalId(rs.getString("external_id"));
-            n.setCreatedAt(rs.getTimestamp("created_at").toInstant());
-            var sentAt = rs.getTimestamp("sent_at");
-            n.setSentAt(sentAt == null ? null : sentAt.toInstant());
-            var deliveredAt = rs.getTimestamp("delivered_at");
-            n.setDeliveredAt(deliveredAt == null ? null : deliveredAt.toInstant());
-            n.setLastError(rs.getString("last_error"));
-            return n;
-        };
+    private Condition toCondition(Filter filter) {
+        Condition c = noCondition();
+        if (filter.userId() != null) {
+            c = c.and(NOTIFICATIONS.USER_ID.eq(filter.userId()));
+        }
+        if (filter.status() != null) {
+            c = c.and(NOTIFICATIONS.STATUS.eq(filter.status()));
+        }
+        if (filter.channel() != null) {
+            c = c.and(NOTIFICATIONS.CHANNEL.eq(filter.channel()));
+        }
+        if (filter.eventType() != null) {
+            c = c.and(NOTIFICATIONS.EVENT_TYPE.eq(filter.eventType()));
+        }
+        if (filter.from() != null) {
+            c = c.and(NOTIFICATIONS.CREATED_AT.ge(filter.from()));
+        }
+        if (filter.to() != null) {
+            c = c.and(NOTIFICATIONS.CREATED_AT.lt(filter.to()));
+        }
+        return c;
     }
 
     public record Filter(
         UUID userId,
         NotificationStatus status,
-        Channel channel,
+        NotificationChannel channel,
         String eventType,
-        Instant from,
-        Instant to
+        OffsetDateTime from,
+        OffsetDateTime to
     ) {
         public static Filter empty() { return new Filter(null, null, null, null, null, null); }
     }

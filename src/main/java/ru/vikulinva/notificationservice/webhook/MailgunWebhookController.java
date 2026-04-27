@@ -76,7 +76,7 @@ public class MailgunWebhookController {
         }
 
         switch (event) {
-            case "delivered" -> service.markDelivered(externalId, time.now());
+            case "delivered" -> service.markDelivered(externalId, time.now().atOffset(java.time.ZoneOffset.UTC));
             case "permanent_failure", "bounced" -> {
                 String reason = eventData.path("delivery-status").path("description").asText("bounced");
                 service.markBounced(externalId, reason);

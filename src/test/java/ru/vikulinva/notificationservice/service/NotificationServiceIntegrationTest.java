@@ -4,10 +4,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import ru.vikulinva.notificationservice.base.PlatformBaseIntegrationTest;
-import ru.vikulinva.notificationservice.domain.Channel;
-import ru.vikulinva.notificationservice.domain.Notification;
-import ru.vikulinva.notificationservice.domain.NotificationStatus;
 import ru.vikulinva.notificationservice.error.InvalidStatusForRetryException;
+import ru.vikulinva.notificationservice.generated.enums.NotificationChannel;
+import ru.vikulinva.notificationservice.generated.enums.NotificationStatus;
+import ru.vikulinva.notificationservice.generated.tables.pojos.NotificationsPojo;
 import ru.vikulinva.notificationservice.repository.NotificationRepository;
 import ru.vikulinva.notificationservice.repository.NotificationRepository.Filter;
 
@@ -55,8 +55,8 @@ class NotificationServiceIntegrationTest extends PlatformBaseIntegrationTest {
 
         var queued = repository.search(Filter.empty(), 0, 50);
         assertThat(queued).hasSize(2);
-        assertThat(queued).extracting(Notification::getChannel)
-            .containsExactlyInAnyOrder(Channel.EMAIL, Channel.PUSH);
+        assertThat(queued).extracting(NotificationsPojo::getChannel)
+            .containsExactlyInAnyOrder(NotificationChannel.EMAIL, NotificationChannel.PUSH);
         assertThat(queued).allMatch(n -> n.getStatus() == NotificationStatus.QUEUED);
 
         // Диспатч переводит в SENT
@@ -129,7 +129,7 @@ class NotificationServiceIntegrationTest extends PlatformBaseIntegrationTest {
         service.dispatchPending(10);
 
         var emails = repository.search(
-            new Filter(null, NotificationStatus.FAILED, Channel.EMAIL, null, null, null), 0, 10);
+            new Filter(null, NotificationStatus.FAILED, NotificationChannel.EMAIL, null, null, null), 0, 10);
         assertThat(emails).hasSize(1);
         assertThat(emails.get(0).getLastError()).contains("400");
     }
@@ -193,10 +193,11 @@ class NotificationServiceIntegrationTest extends PlatformBaseIntegrationTest {
             "{\"customerId\":\"%s\"}".formatted(customerId));
         service.dispatchPending(10);
 
-        service.markDelivered("msg-99", Instant.parse("2026-04-01T10:01:00Z"));
+        var deliveredAt = Instant.parse("2026-04-01T10:01:00Z").atOffset(java.time.ZoneOffset.UTC);
+        service.markDelivered("msg-99", deliveredAt);
         var delivered = repository.findByExternalId("msg-99").orElseThrow();
         assertThat(delivered.getStatus()).isEqualTo(NotificationStatus.DELIVERED);
-        assertThat(delivered.getDeliveredAt()).isEqualTo(Instant.parse("2026-04-01T10:01:00Z"));
+        assertThat(delivered.getDeliveredAt()).isEqualTo(deliveredAt);
 
         // markBounced работает только с SENT — на DELIVERED не сработает
         service.markBounced("msg-99", "should not apply");

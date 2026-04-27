@@ -1,6 +1,6 @@
 package ru.vikulinva.notificationservice.controller.dto;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -20,6 +20,6 @@ public record NotificationDetailDto(
         int attemptNumber,
         String result,
         String responseSnippet,
-        Instant attemptedAt
+        OffsetDateTime attemptedAt
     ) {}
 }

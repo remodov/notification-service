@@ -1,58 +1,41 @@
 package ru.vikulinva.notificationservice.repository;
 
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
-import ru.vikulinva.notificationservice.domain.DeliveryAttempt;
+import ru.vikulinva.notificationservice.generated.tables.pojos.DeliveryAttemptsPojo;
 
-import java.sql.Timestamp;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import static ru.vikulinva.notificationservice.generated.Tables.DELIVERY_ATTEMPTS;
+
 @Repository
 public class DeliveryAttemptRepository {
 
-    private final NamedParameterJdbcTemplate jdbc;
+    private final DSLContext dsl;
 
-    public DeliveryAttemptRepository(NamedParameterJdbcTemplate jdbc) {
-        this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
+    public DeliveryAttemptRepository(DSLContext dsl) {
+        this.dsl = Objects.requireNonNull(dsl, "dsl");
     }
 
-    public void insert(DeliveryAttempt a) {
-        jdbc.update("""
-            INSERT INTO delivery_attempts (id, notification_id, attempt_number, result, response_snippet, attempted_at)
-            VALUES (:id, :notificationId, :attemptNumber, :result, :responseSnippet, :attemptedAt)
-            """, new MapSqlParameterSource()
-            .addValue("id", a.id())
-            .addValue("notificationId", a.notificationId())
-            .addValue("attemptNumber", a.attemptNumber())
-            .addValue("result", a.result().name())
-            .addValue("responseSnippet", a.responseSnippet())
-            .addValue("attemptedAt", Timestamp.from(a.attemptedAt())));
+    public void insert(DeliveryAttemptsPojo a) {
+        dsl.insertInto(DELIVERY_ATTEMPTS)
+            .set(dsl.newRecord(DELIVERY_ATTEMPTS, a))
+            .execute();
     }
 
     public int countAttempts(UUID notificationId) {
-        Integer c = jdbc.queryForObject(
-            "SELECT COUNT(*) FROM delivery_attempts WHERE notification_id = :id",
-            new MapSqlParameterSource("id", notificationId),
-            Integer.class);
-        return c == null ? 0 : c;
+        return dsl.fetchCount(
+            dsl.selectOne()
+                .from(DELIVERY_ATTEMPTS)
+                .where(DELIVERY_ATTEMPTS.NOTIFICATION_ID.eq(notificationId)));
     }
 
-    public List<DeliveryAttempt> findByNotificationId(UUID notificationId) {
-        return jdbc.query("""
-            SELECT id, notification_id, attempt_number, result, response_snippet, attempted_at
-            FROM delivery_attempts
-            WHERE notification_id = :id
-            ORDER BY attempt_number
-            """, new MapSqlParameterSource("id", notificationId),
-            (rs, rn) -> new DeliveryAttempt(
-                rs.getObject("id", UUID.class),
-                rs.getObject("notification_id", UUID.class),
-                rs.getInt("attempt_number"),
-                DeliveryAttempt.AttemptResult.valueOf(rs.getString("result")),
-                rs.getString("response_snippet"),
-                rs.getTimestamp("attempted_at").toInstant()));
+    public List<DeliveryAttemptsPojo> findByNotificationId(UUID notificationId) {
+        return dsl.selectFrom(DELIVERY_ATTEMPTS)
+            .where(DELIVERY_ATTEMPTS.NOTIFICATION_ID.eq(notificationId))
+            .orderBy(DELIVERY_ATTEMPTS.ATTEMPT_NUMBER.asc())
+            .fetchInto(DeliveryAttemptsPojo.class);
     }
 }

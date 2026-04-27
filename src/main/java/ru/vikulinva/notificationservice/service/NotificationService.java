@@ -5,20 +5,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.jooq.JSONB;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.vikulinva.notificationservice.channel.ChannelRules;
-import ru.vikulinva.notificationservice.domain.Channel;
-import ru.vikulinva.notificationservice.domain.DeliveryAttempt;
-import ru.vikulinva.notificationservice.domain.DeliveryAttempt.AttemptResult;
-import ru.vikulinva.notificationservice.domain.Notification;
-import ru.vikulinva.notificationservice.domain.NotificationStatus;
-import ru.vikulinva.notificationservice.domain.Template;
 import ru.vikulinva.notificationservice.domain.UserContact;
 import ru.vikulinva.notificationservice.error.InvalidStatusForRetryException;
 import ru.vikulinva.notificationservice.error.NotificationNotFoundException;
+import ru.vikulinva.notificationservice.generated.enums.DeliveryAttemptResult;
+import ru.vikulinva.notificationservice.generated.enums.NotificationChannel;
+import ru.vikulinva.notificationservice.generated.enums.NotificationStatus;
+import ru.vikulinva.notificationservice.generated.tables.pojos.DeliveryAttemptsPojo;
+import ru.vikulinva.notificationservice.generated.tables.pojos.NotificationsPojo;
+import ru.vikulinva.notificationservice.generated.tables.pojos.TemplatesPojo;
 import ru.vikulinva.notificationservice.provider.contact.ContactClient;
 import ru.vikulinva.notificationservice.provider.email.EmailProvider;
 import ru.vikulinva.notificationservice.provider.push.PushProvider;
@@ -31,6 +32,8 @@ import ru.vikulinva.notificationservice.time.DateTimeService;
 import ru.vikulinva.notificationservice.time.UuidGenerator;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -40,12 +43,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Центральный сервис: принимает входящее событие, создаёт {@link Notification}-ы
- * по таблице каналов, доставляет через провайдеров, обновляет статусы.
- *
- * <p>На Tier A это «толстый сервис» с прямым SQL — на Tier B он бы
- * расщепился на UseCase'ы (CreateNotifications, DispatchNotification,
- * RetryNotification и т.п.).
+ * Центральный сервис: принимает входящее событие, создаёт строки в
+ * {@code notifications} по таблице каналов, отправляет через провайдеров,
+ * обновляет статусы. Работает напрямую с jOOQ-сгенерёнными POJO.
  */
 @Service
 public class NotificationService {
@@ -97,18 +97,15 @@ public class NotificationService {
         this.failedCounter = meterRegistry.counter("notification_failed_total");
     }
 
-    /**
-     * Принимает событие из Kafka. Идемпотентен по {@code eventId} (BR-N1):
-     * если запись уже была — ничего не делает.
-     */
     @Transactional
     public void processIncomingEvent(UUID eventId, String eventType, UUID userId, String payload) {
-        if (!processed.markProcessed(eventId, eventType, time.now())) {
+        OffsetDateTime now = nowOffset();
+        if (!processed.markProcessed(eventId, eventType, now)) {
             log.debug("{} #{} already processed, skipping", eventType, eventId);
             return;
         }
 
-        List<Channel> channels = channelRules.channelsFor(eventType);
+        List<NotificationChannel> channels = channelRules.channelsFor(eventType);
         if (channels.isEmpty()) {
             log.debug("No channels configured for {} — skipping", eventType);
             return;
@@ -122,41 +119,43 @@ public class NotificationService {
         UserContact uc = contact.get();
         Map<String, String> templateVars = extractTemplateVars(payload, uc);
 
-        for (Channel channel : channels) {
-            createNotification(eventId, eventType, channel, uc, payload, templateVars);
+        for (NotificationChannel channel : channels) {
+            createNotification(eventId, eventType, channel, uc, payload, templateVars, now);
         }
     }
 
-    private void createNotification(UUID eventId, String eventType, Channel channel,
+    private void createNotification(UUID eventId, String eventType, NotificationChannel channel,
                                        UserContact contact, String sourcePayload,
-                                       Map<String, String> templateVars) {
+                                       Map<String, String> templateVars,
+                                       OffsetDateTime createdAt) {
         String templateKey = channelRules.templateKey(eventType, channel);
-        Optional<Template> tpl = templates.find(templateKey, contact.locale());
+        Optional<TemplatesPojo> tpl = templates.find(templateKey, contact.locale());
         if (tpl.isEmpty()) {
             templateMissingCounter.increment();
             log.warn("BR-N3: template {} not found for locale {}, skipping", templateKey, contact.locale());
             return;
         }
 
-        if (channel == Channel.EMAIL) {
+        if (channel == NotificationChannel.EMAIL) {
             if (contact.email() == null || contact.email().isBlank()) {
                 log.debug("No email for user {} — skipping EMAIL channel", contact.userId());
                 return;
             }
-            insert(buildNotification(eventId, eventType, channel, contact.userId(), contact.email(),
-                templateKey, contact.locale(), sourcePayload, templateVars));
-        } else if (channel == Channel.PUSH) {
+            notifications.insert(buildNotification(eventId, eventType, channel, contact.userId(), contact.email(),
+                templateKey, contact.locale(), sourcePayload, templateVars, createdAt));
+        } else if (channel == NotificationChannel.PUSH) {
             for (String token : contact.pushTokens()) {
-                insert(buildNotification(eventId, eventType, channel, contact.userId(), token,
-                    templateKey, contact.locale(), sourcePayload, templateVars));
+                notifications.insert(buildNotification(eventId, eventType, channel, contact.userId(), token,
+                    templateKey, contact.locale(), sourcePayload, templateVars, createdAt));
             }
         }
     }
 
-    private Notification buildNotification(UUID eventId, String eventType, Channel channel, UUID userId,
-                                              String contact, String templateKey, String locale,
-                                              String sourcePayload, Map<String, String> vars) {
-        Notification n = new Notification();
+    private NotificationsPojo buildNotification(UUID eventId, String eventType, NotificationChannel channel,
+                                                   UUID userId, String contact, String templateKey, String locale,
+                                                   String sourcePayload, Map<String, String> vars,
+                                                   OffsetDateTime createdAt) {
+        NotificationsPojo n = new NotificationsPojo();
         n.setId(uuid.generate());
         n.setEventId(eventId);
         n.setEventType(eventType);
@@ -166,24 +165,16 @@ public class NotificationService {
         n.setTemplateKey(templateKey);
         n.setLocale(locale);
         n.setStatus(NotificationStatus.QUEUED);
-        n.setSourceEventPayload(sourcePayload);
-        n.setTemplateVariables(serialize(vars));
-        n.setCreatedAt(time.now());
+        n.setSourceEventPayload(JSONB.valueOf(sourcePayload));
+        n.setTemplateVariables(JSONB.valueOf(serialize(vars)));
+        n.setCreatedAt(createdAt);
         return n;
     }
 
-    private void insert(Notification n) {
-        notifications.insert(n);
-    }
-
-    /**
-     * Берёт пачку QUEUED-уведомлений и пытается отправить. Каждое — в отдельной
-     * транзакции, чтобы один отказ не отменял другие.
-     */
     public int dispatchPending(int batchSize) {
-        List<Notification> queued = notifications.findPending(batchSize);
+        List<NotificationsPojo> queued = notifications.findPending(batchSize);
         int sent = 0;
-        for (Notification n : queued) {
+        for (NotificationsPojo n : queued) {
             try {
                 if (dispatchOne(n)) {
                     sent++;
@@ -196,15 +187,15 @@ public class NotificationService {
     }
 
     @Transactional
-    public boolean dispatchOne(Notification n) {
-        Template template = templates.find(n.getTemplateKey(), n.getLocale())
+    public boolean dispatchOne(NotificationsPojo n) {
+        TemplatesPojo template = templates.find(n.getTemplateKey(), n.getLocale())
             .orElseThrow(() -> new IllegalStateException("Template gone for " + n.getTemplateKey()));
         Map<String, String> vars = deserialize(n.getTemplateVariables());
         TemplateRenderer.Rendered rendered = renderer.render(template, vars);
 
         int attemptNumber = attempts.countAttempts(n.getId()) + 1;
-        Instant now = time.now();
-        AttemptResult result;
+        OffsetDateTime now = nowOffset();
+        DeliveryAttemptResult result;
         String responseSnippet = null;
         String externalId = null;
         boolean ok = false;
@@ -214,38 +205,45 @@ public class NotificationService {
             case EMAIL -> {
                 EmailProvider.Result r = emailProvider.send(n.getContact(), rendered.subject(), rendered.body());
                 if (r instanceof EmailProvider.Result.Ok okR) {
-                    result = AttemptResult.OK;
+                    result = DeliveryAttemptResult.OK;
                     externalId = okR.externalId();
                     ok = true;
                 } else if (r instanceof EmailProvider.Result.PermanentError pe) {
-                    result = AttemptResult.PERMANENT_ERROR;
+                    result = DeliveryAttemptResult.PERMANENT_ERROR;
                     responseSnippet = pe.reason();
                     permanentError = true;
                 } else {
                     EmailProvider.Result.TransientError te = (EmailProvider.Result.TransientError) r;
-                    result = AttemptResult.TRANSIENT_ERROR;
+                    result = DeliveryAttemptResult.TRANSIENT_ERROR;
                     responseSnippet = te.reason();
                 }
             }
             case PUSH -> {
                 PushProvider.Result r = pushProvider.send(n.getContact(), rendered.subject(), rendered.body());
                 if (r == PushProvider.Result.Ok.INSTANCE) {
-                    result = AttemptResult.OK;
+                    result = DeliveryAttemptResult.OK;
                     ok = true;
                 } else if (r instanceof PushProvider.Result.PermanentError pe) {
-                    result = AttemptResult.PERMANENT_ERROR;
+                    result = DeliveryAttemptResult.PERMANENT_ERROR;
                     responseSnippet = pe.reason();
                     permanentError = true;
                 } else {
                     PushProvider.Result.TransientError te = (PushProvider.Result.TransientError) r;
-                    result = AttemptResult.TRANSIENT_ERROR;
+                    result = DeliveryAttemptResult.TRANSIENT_ERROR;
                     responseSnippet = te.reason();
                 }
             }
             default -> throw new IllegalStateException("Unsupported channel: " + n.getChannel());
         }
 
-        attempts.insert(new DeliveryAttempt(uuid.generate(), n.getId(), attemptNumber, result, responseSnippet, now));
+        DeliveryAttemptsPojo attempt = new DeliveryAttemptsPojo();
+        attempt.setId(uuid.generate());
+        attempt.setNotificationId(n.getId());
+        attempt.setAttemptNumber(attemptNumber);
+        attempt.setResult(result);
+        attempt.setResponseSnippet(responseSnippet);
+        attempt.setAttemptedAt(now);
+        attempts.insert(attempt);
 
         if (ok) {
             notifications.updateStatus(n.getId(), NotificationStatus.SENT, now, externalId, null);
@@ -256,7 +254,6 @@ public class NotificationService {
             failedCounter.increment();
             return false;
         }
-        // transient — если ретраи исчерпаны, переводим в FAILED
         if (attemptNumber >= MAX_ATTEMPTS) {
             notifications.updateStatus(n.getId(), NotificationStatus.FAILED, null, null,
                 "Max retries reached: " + responseSnippet);
@@ -268,31 +265,31 @@ public class NotificationService {
     }
 
     @Transactional
-    public Notification retry(UUID notificationId) {
-        Notification n = notifications.findById(notificationId)
+    public NotificationsPojo retry(UUID notificationId) {
+        NotificationsPojo n = notifications.findById(notificationId)
             .orElseThrow(() -> new NotificationNotFoundException(notificationId));
-        if (!n.getStatus().canRetry()) {
+        if (n.getStatus() != NotificationStatus.FAILED) {
             throw new InvalidStatusForRetryException(n.getStatus());
         }
+        notifications.updateStatus(n.getId(), NotificationStatus.QUEUED, null, null, null);
         n.setStatus(NotificationStatus.QUEUED);
         n.setLastError(null);
-        notifications.updateStatus(n.getId(), NotificationStatus.QUEUED, null, null, null);
         return n;
     }
 
     @Transactional
     public void abandon(UUID notificationId) {
-        Notification n = notifications.findById(notificationId)
+        NotificationsPojo n = notifications.findById(notificationId)
             .orElseThrow(() -> new NotificationNotFoundException(notificationId));
         if (n.getStatus() != NotificationStatus.FAILED) {
             throw new InvalidStatusForRetryException(n.getStatus());
         }
         notifications.updateStatus(n.getId(), NotificationStatus.FAILED, null, null,
-            "Abandoned by operator at " + time.now());
+            "Abandoned by operator at " + nowOffset());
     }
 
     @Transactional
-    public void markDelivered(String externalId, Instant deliveredAt) {
+    public void markDelivered(String externalId, OffsetDateTime deliveredAt) {
         notifications.findByExternalId(externalId)
             .ifPresent(n -> notifications.markDelivered(n.getId(), deliveredAt));
     }
@@ -329,10 +326,10 @@ public class NotificationService {
         }
     }
 
-    private Map<String, String> deserialize(String json) {
-        if (json == null || json.isBlank()) return Map.of();
+    private Map<String, String> deserialize(JSONB json) {
+        if (json == null || json.data() == null || json.data().isBlank()) return Map.of();
         try {
-            JsonNode node = objectMapper.readTree(json);
+            JsonNode node = objectMapper.readTree(json.data());
             Map<String, String> out = new HashMap<>();
             node.fields().forEachRemaining(e -> out.put(e.getKey(), e.getValue().asText()));
             return out;
@@ -355,6 +352,14 @@ public class NotificationService {
     }
 
     public int purgeOlderThan(Instant threshold) {
-        return notifications.deleteOlderThan(threshold);
+        return notifications.deleteOlderThan(toOffset(threshold));
+    }
+
+    private OffsetDateTime nowOffset() {
+        return toOffset(time.now());
+    }
+
+    private static OffsetDateTime toOffset(Instant i) {
+        return i == null ? null : i.atOffset(ZoneOffset.UTC);
     }
 }

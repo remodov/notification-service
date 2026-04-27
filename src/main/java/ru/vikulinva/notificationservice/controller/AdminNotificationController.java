@@ -12,22 +12,21 @@ import ru.vikulinva.notificationservice.controller.dto.NotificationDetailDto;
 import ru.vikulinva.notificationservice.controller.dto.NotificationListDto;
 import ru.vikulinva.notificationservice.controller.dto.NotificationSummaryDto;
 import ru.vikulinva.notificationservice.controller.dto.RestMapper;
-import ru.vikulinva.notificationservice.domain.Channel;
-import ru.vikulinva.notificationservice.domain.NotificationStatus;
 import ru.vikulinva.notificationservice.error.NotificationNotFoundException;
+import ru.vikulinva.notificationservice.generated.enums.NotificationChannel;
+import ru.vikulinva.notificationservice.generated.enums.NotificationStatus;
+import ru.vikulinva.notificationservice.repository.DeliveryAttemptRepository;
 import ru.vikulinva.notificationservice.repository.NotificationRepository;
 import ru.vikulinva.notificationservice.repository.NotificationRepository.Filter;
-import ru.vikulinva.notificationservice.repository.DeliveryAttemptRepository;
 import ru.vikulinva.notificationservice.service.NotificationService;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
 /**
- * Админский REST для оператора поддержки. Все эндпоинты — ROLE_support-operator
- * либо ROLE_admin (на профиле {@code local} security disabled через
- * LocalSecurityConfig).
+ * Админский REST для оператора. role:support-operator (на профиле {@code local}
+ * security disabled через {@code LocalSecurityConfig}).
  */
 @RestController
 @RequestMapping("/api/v1/notifications")
@@ -53,10 +52,10 @@ public class AdminNotificationController {
     public ResponseEntity<NotificationListDto> list(
         @RequestParam(required = false) UUID userId,
         @RequestParam(required = false) NotificationStatus status,
-        @RequestParam(required = false) Channel channel,
+        @RequestParam(required = false) NotificationChannel channel,
         @RequestParam(required = false) String eventType,
-        @RequestParam(required = false) Instant from,
-        @RequestParam(required = false) Instant to,
+        @RequestParam(required = false) OffsetDateTime from,
+        @RequestParam(required = false) OffsetDateTime to,
         @RequestParam(defaultValue = "0") int page,
         @RequestParam(defaultValue = "50") int size
     ) {

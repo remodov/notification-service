@@ -1,6 +1,6 @@
 package ru.vikulinva.notificationservice.error;
 
-import ru.vikulinva.notificationservice.domain.NotificationStatus;
+import ru.vikulinva.notificationservice.generated.enums.NotificationStatus;
 
 public final class InvalidStatusForRetryException extends NotificationException {
 

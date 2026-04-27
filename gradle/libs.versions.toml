@@ -3,6 +3,7 @@ java = "21"
 spring-boot = "3.4.1"
 spring-kafka = "3.3.1"
 
+jooq = "3.19.15"
 liquibase = "4.29.2"
 postgresql = "42.7.4"
 hikaricp = "5.1.0"
@@ -21,6 +22,7 @@ wiremock = "3.10.0"
 spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter", version.ref = "spring-boot" }
 spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot" }
 spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version.ref = "spring-boot" }
+spring-boot-starter-jooq = { module = "org.springframework.boot:spring-boot-starter-jooq", version.ref = "spring-boot" }
 spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version.ref = "spring-boot" }
 spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator", version.ref = "spring-boot" }
 spring-boot-starter-security = { module = "org.springframework.boot:spring-boot-starter-security", version.ref = "spring-boot" }
@@ -55,3 +57,4 @@ wiremock-jetty12 = { module = "org.wiremock:wiremock-jetty12", version.ref = "wi
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version = "1.1.7" }
 liquibase = { id = "org.liquibase.gradle", version = "2.2.2" }
+jooq-codegen = { id = "nu.studer.jooq", version = "10.2" }

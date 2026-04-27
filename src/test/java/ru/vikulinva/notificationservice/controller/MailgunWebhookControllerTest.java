@@ -7,7 +7,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import ru.vikulinva.notificationservice.base.PlatformBaseIntegrationTest;
-import ru.vikulinva.notificationservice.domain.NotificationStatus;
+import ru.vikulinva.notificationservice.generated.enums.NotificationStatus;
 import ru.vikulinva.notificationservice.repository.NotificationRepository;
 import ru.vikulinva.notificationservice.service.NotificationService;
 

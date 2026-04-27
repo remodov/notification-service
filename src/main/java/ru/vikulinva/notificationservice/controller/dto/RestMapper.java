@@ -1,19 +1,19 @@
 package ru.vikulinva.notificationservice.controller.dto;
 
+import org.jooq.JSONB;
 import org.springframework.stereotype.Component;
-import ru.vikulinva.notificationservice.domain.DeliveryAttempt;
-import ru.vikulinva.notificationservice.domain.Notification;
+import ru.vikulinva.notificationservice.generated.tables.pojos.DeliveryAttemptsPojo;
+import ru.vikulinva.notificationservice.generated.tables.pojos.NotificationsPojo;
 
 import java.util.List;
 
 /**
- * Маппинг доменных POJO → REST-DTO. На Tier A — простые методы вместо
- * MapStruct: меньше зависимостей, проще читать.
+ * Маппинг сгенерённых jOOQ-POJO → REST-DTO.
  */
 @Component
 public class RestMapper {
 
-    public NotificationSummaryDto toSummary(Notification n) {
+    public NotificationSummaryDto toSummary(NotificationsPojo n) {
         return new NotificationSummaryDto(
             n.getId(),
             n.getUserId(),
@@ -26,14 +26,14 @@ public class RestMapper {
             n.getDeliveredAt());
     }
 
-    public NotificationDetailDto toDetail(Notification n, List<DeliveryAttempt> attempts) {
+    public NotificationDetailDto toDetail(NotificationsPojo n, List<DeliveryAttemptsPojo> attempts) {
         var attemptDtos = attempts.stream()
             .map(a -> new NotificationDetailDto.DeliveryAttemptDto(
-                a.id(),
-                a.attemptNumber(),
-                a.result().name(),
-                a.responseSnippet(),
-                a.attemptedAt()))
+                a.getId(),
+                a.getAttemptNumber(),
+                a.getResult().name(),
+                a.getResponseSnippet(),
+                a.getAttemptedAt()))
             .toList();
         return new NotificationDetailDto(
             toSummary(n),
@@ -41,8 +41,12 @@ public class RestMapper {
             n.getLocale(),
             n.getExternalId(),
             n.getLastError(),
-            n.getSourceEventPayload(),
-            n.getTemplateVariables(),
+            jsonb(n.getSourceEventPayload()),
+            jsonb(n.getTemplateVariables()),
             attemptDtos);
+    }
+
+    private static String jsonb(JSONB value) {
+        return value == null ? null : value.data();
     }
 }
